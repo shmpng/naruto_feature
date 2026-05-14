@@ -1,6 +1,6 @@
 """
-Sage Mode — RIGHT EYE ONLY (DISTANCE-AWARE SCALING)
-The shape scales with eye size — bigger when close, smaller when far.
+Sage Mode — BOTH EYES (DISTANCE-AWARE SCALING)
+Orange filter on both eyes, clips with eyelid open/close, black lash lines.
 FILES: realorange.jpg + face_landmarker.task in same folder
 INSTALL: pip install mediapipe opencv-python numpy
 """
@@ -19,33 +19,37 @@ except ImportError:
 from mediapipe.tasks.python import vision as _v
 from mediapipe.tasks.python.core import base_options as _b
 
-R_L, R_R = 362, 263
+# ── Eye landmark indices ───────────────────────────────────────────
+# Right eye (person's right)
+R_INNER, R_OUTER = 362, 263
+R_UPPER_LID = [263, 466, 388, 387, 386, 385, 384, 398, 362]
+R_LOWER_LID = [263, 249, 390, 373, 374, 380, 381, 382, 362]
+
+# Left eye (person's left)
+L_INNER, L_OUTER = 133, 33
+L_UPPER_LID = [33, 246, 161, 160, 159, 158, 157, 173, 133]
+L_LOWER_LID = [33,   7, 163, 144, 145, 153, 154, 155, 133]
 
 # ================================================================
 # PERMANENT SHAPE — normalized to eye width = 1.0 unit
-# These were originally captured at ~71px eye width, so divide by 71
+# Captured at ~71px eye width
 # ================================================================
-
 RAW_SOCKET = [
     [-28, 6], [-28, 2], [-28, -10], [-14, -25], [1, -31],
     [16, -30], [28, -25], [36, -21], [43, -16], [43, -16],
     [33, 0], [23, 3], [11, 5], [-4, 7], [-17, 7],
     [-28, 6], [-28, 6], [-28, 6]
 ]
-
-RAW_PUNCH = [
-    [-32, 15], [-28, 5], [-21, -3], [-10, -7], [0, -8],
-    [12, -8], [20, -7], [27, -6], [32, -5], [32, -5],
-    [25, 0], [17, 7], [8, 12], [-3, 17], [-13, 17],
-    [-23, 15], [-28, 15], [-32, 15]
-]
-
-# Baseline eye width the shape was captured at (pixels)
 BASELINE_EYE_WIDTH = 71.0
-
-# Normalize to [-1, 1] space relative to eye width
-NORM_SOCKET = [(dx / BASELINE_EYE_WIDTH, dy / BASELINE_EYE_WIDTH) for dx, dy in RAW_SOCKET]
-NORM_PUNCH  = [(dx / BASELINE_EYE_WIDTH, dy / BASELINE_EYE_WIDTH) for dx, dy in RAW_PUNCH]
+NORM_SOCKET        = [(dx / BASELINE_EYE_WIDTH, dy / BASELINE_EYE_WIDTH) for dx, dy in RAW_SOCKET]
+# Left eye socket — built symmetrically so upper area is fully covered
+RAW_SOCKET_LEFT = [
+    [28, 6], [28, 2], [28, -10], [14, -25], [-1, -31],
+    [-16, -30], [-28, -25], [-36, -21], [-43, -16], [-43, -16],
+    [-33, 0], [-23, 3], [-11, 5], [4, 7], [17, 7],
+    [28, 6], [28, 6], [28, 6]
+]
+NORM_SOCKET_MIRROR = [(dx / BASELINE_EYE_WIDTH, dy / BASELINE_EYE_WIDTH) for dx, dy in RAW_SOCKET_LEFT]
 
 
 def download_model(path):
@@ -61,40 +65,36 @@ def lm_px(lms, idx, W, H):
     return np.array([lms[idx].x * W, lms[idx].y * H], dtype=np.float32)
 
 
-def apply_sage_eye(frame, lms, W, H, orange_img):
-    left_pt  = lm_px(lms, R_L, W, H)
-    right_pt = lm_px(lms, R_R, W, H)
+def apply_sage_eye(frame, lms, W, H, orange_img,
+                   inner_idx, outer_idx,
+                   upper_lid_idx, lower_lid_idx,
+                   norm_socket):
 
-    # Current eye width in pixels — this is our scale factor
-    eye_width = np.linalg.norm(right_pt - left_pt)
+    inner_pt = lm_px(lms, inner_idx, W, H)
+    outer_pt = lm_px(lms, outer_idx, W, H)
+
+    eye_width = np.linalg.norm(outer_pt - inner_pt)
     if eye_width < 4:
         return
 
-    eye_cx = int((left_pt[0] + right_pt[0]) / 2)
-    eye_cy = int((left_pt[1] + right_pt[1]) / 2)
+    eye_cx = int((inner_pt[0] + outer_pt[0]) / 2)
+    eye_cy = int((inner_pt[1] + outer_pt[1]) / 2)
 
-    # Scale normalized coords by current eye width → proper pixel offsets
+    # Socket shape scaled to current eye width
     socket_poly = np.array([
         [eye_cx + int(dx * eye_width), eye_cy + int(dy * eye_width)]
-        for dx, dy in NORM_SOCKET
+        for dx, dy in norm_socket
     ], dtype=np.int32)
 
-    # ── REAL EYELID LANDMARKS ─────────────────────────────────────
-    # Upper lid goes from outer corner → peak → inner corner (top arc)
-    # Lower lid goes from outer corner → trough → inner corner (bottom arc)
-    UPPER_LID = [263, 466, 388, 387, 386, 385, 384, 398, 362]
-    LOWER_LID = [263, 249, 390, 373, 374, 380, 381, 382, 362]
-
+    # Real eyelid points
     upper_lid_pts = np.array(
-        [[int(lms[i].x * W), int(lms[i].y * H)] for i in UPPER_LID],
+        [[int(lms[i].x * W), int(lms[i].y * H)] for i in upper_lid_idx],
         dtype=np.int32)
     lower_lid_pts = np.array(
-        [[int(lms[i].x * W), int(lms[i].y * H)] for i in LOWER_LID],
+        [[int(lms[i].x * W), int(lms[i].y * H)] for i in lower_lid_idx],
         dtype=np.int32)
 
-    # Build the visible eye opening polygon:
-    # upper lid arc + lower lid arc joined = the open eye shape
-    # Orange is clipped to this — closes with the eye naturally
+    # Eye-opening polygon — narrows when eye closes
     eye_opening_poly = np.vstack([upper_lid_pts, lower_lid_pts[::-1]])
 
     bx1 = max(0, int(socket_poly[:, 0].min()) - 4)
@@ -113,7 +113,7 @@ def apply_sage_eye(frame, lms, W, H, orange_img):
     orange_s = cv2.resize(orange_img, (scaled_w, scaled_h), interpolation=cv2.INTER_AREA)
 
     eye_bottom = int(socket_poly[:, 1].max())
-    oy_start = eye_bottom - scaled_h
+    oy_start   = eye_bottom - scaled_h
     fy1 = max(0, oy_start)
     fy2 = min(H, eye_bottom)
     fx1 = bx1
@@ -131,17 +131,23 @@ def apply_sage_eye(frame, lms, W, H, orange_img):
 
     orange_patch = orange_s[sy1:sy2, sx1:sx2, :3]
 
-    # Socket mask = the orange skin area (around the eye)
     socket_mask = np.zeros((H, W), np.uint8)
     cv2.fillPoly(socket_mask, [socket_poly], 255)
 
-    # Eye opening mask = the actual open area between eyelids (dynamic)
-    # Orange is NOT painted here — this is what clips with eye close
     eye_open_mask = np.zeros((H, W), np.uint8)
     cv2.fillPoly(eye_open_mask, [eye_opening_poly], 255)
 
-    # Paint only on socket but NOT inside the visible eye opening
+    # Hard cut — fill a polygon covering everything ABOVE the lower lash arc,
+    # then AND it in so nothing below the lower lashes gets orange.
+    lower_sorted = lower_lid_pts[np.argsort(lower_lid_pts[:, 0])]
+    above_lower_poly = np.array(
+        [[0, 0], [W, 0]] + lower_sorted[::-1].tolist(),
+        dtype=np.int32)
+    above_lower_mask = np.zeros((H, W), np.uint8)
+    cv2.fillPoly(above_lower_mask, [above_lower_poly], 255)
+
     paint_mask = cv2.bitwise_and(socket_mask, cv2.bitwise_not(eye_open_mask))
+    paint_mask = cv2.bitwise_and(paint_mask, above_lower_mask)
 
     ry1 = max(0, min(by1, fy1))
     ry2 = min(H, max(by2, fy2))
@@ -158,8 +164,8 @@ def apply_sage_eye(frame, lms, W, H, orange_img):
     py2 = min(ry2 - ry1, py1 + (fy2 - fy1))
     px1 = max(0, fx1 - rx1)
     px2 = min(rx2 - rx1, px1 + (fx2 - fx1))
-    ph = py2 - py1
-    pw = px2 - px1
+    ph  = py2 - py1
+    pw  = px2 - px1
     if ph > 0 and pw > 0:
         canvas[py1:py2, px1:px2] = orange_patch[:ph, :pw]
 
@@ -167,24 +173,18 @@ def apply_sage_eye(frame, lms, W, H, orange_img):
     blended = canvas * alpha + roi * (1.0 - alpha)
     frame[ry1:ry2, rx1:rx2] = np.clip(blended, 0, 255).astype(np.uint8)
 
-    # ── BLACK LASH LINES — reuse real lid pts computed above ──────
+    # Upper lash — solid black
     lash_thickness = max(1, int(eye_width * 0.035))
     cv2.polylines(frame, [upper_lid_pts], isClosed=False,
-                  color=(0, 0, 0), thickness=lash_thickness,
-                  lineType=cv2.LINE_AA)
-    cv2.polylines(frame, [lower_lid_pts], isClosed=False,
-                  color=(0, 0, 0), thickness=lash_thickness,
-                  lineType=cv2.LINE_AA)
-    # ─────────────────────────────────────────────────────────────
+                  color=(0, 0, 0), thickness=lash_thickness, lineType=cv2.LINE_AA)
 
-    # Debug: show current eye width
-    cv2.putText(frame, f"eye_w: {eye_width:.0f}px", (10, 55),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
+    # Lower lash — same solid black as upper lash
+    cv2.polylines(frame, [lower_lid_pts], isClosed=False,
+                  color=(0, 0, 0), thickness=lash_thickness, lineType=cv2.LINE_AA)
 
 
 def main():
-    print("\n🦊 SAGE MODE — DISTANCE-AWARE SCALING\n")
-    print("Shape grows/shrinks with your distance from camera.\n")
+    print("\n🦊 SAGE MODE — BOTH EYES\n")
 
     det = _v.FaceLandmarker.create_from_options(
         _v.FaceLandmarkerOptions(
@@ -199,6 +199,7 @@ def main():
         print(f"❌ '{orange_path}' not found in {os.getcwd()}")
         return
     orange = cv2.imread(orange_path)
+    orange_flip = cv2.flip(orange, 1)  # horizontally flipped for left eye
     print(f"✅ Orange: {orange.shape[1]}×{orange.shape[0]}")
 
     cap = cv2.VideoCapture(0)
@@ -222,7 +223,21 @@ def main():
 
         if res.face_landmarks:
             lms = res.face_landmarks[0]
-            apply_sage_eye(frame, lms, W, H, orange_img=orange)
+
+            # Right eye
+            apply_sage_eye(frame, lms, W, H, orange,
+                           inner_idx=R_INNER, outer_idx=R_OUTER,
+                           upper_lid_idx=R_UPPER_LID,
+                           lower_lid_idx=R_LOWER_LID,
+                           norm_socket=NORM_SOCKET)
+
+            # Left eye — mirrored socket + flipped image
+            apply_sage_eye(frame, lms, W, H, orange_flip,
+                           inner_idx=L_INNER, outer_idx=L_OUTER,
+                           upper_lid_idx=L_UPPER_LID,
+                           lower_lid_idx=L_LOWER_LID,
+                           norm_socket=NORM_SOCKET_MIRROR)
+
             cv2.putText(frame, "SAGE MODE", (10, 28),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         else:
@@ -231,7 +246,7 @@ def main():
 
         cv2.putText(frame, "Q=quit", (10, H - 14),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-        cv2.imshow("Sage Mode — Distance Aware", frame)
+        cv2.imshow("Sage Mode — Both Eyes", frame)
 
         if cv2.waitKey(1) & 0xFF in (ord('q'), ord('Q')):
             break
