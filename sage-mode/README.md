@@ -17,9 +17,9 @@ naruto_filter/
 ├── utils.py              # Shared helpers (EAR, image utils, model download)
 ├── requirements.txt
 │
-├── eye_overlay.jpg       # Yellow iris sticker  (white background)
-├── realorange.jpg        # Orange eyeshadow texture  (black background)
-└── face_landmarker.task  # Auto-downloaded on first run
+├── face_landmarker.task  # Auto-downloaded on first run
+├── iris.jpg              # Yellow iris sticker (white background)
+└── eyeshadow.jpg         # Orange eyeshadow texture (black background)
 ```
 
 ---
@@ -50,8 +50,8 @@ The MediaPipe model (`face_landmarker.task`) downloads automatically on first ru
 
 | File | Description |
 |------|-------------|
-| `eye_overlay.jpg` | Yellow circle iris sticker on a **white** background |
-| `realorange.jpg` | Orange eyeshadow texture on a **black** background |
+| `iris.jpg` | Yellow circle iris sticker on a **white** background |
+| `eyeshadow.jpg` | Orange eyeshadow texture on a **black** background |
 
 White background is stripped automatically from the iris sticker.  
 Black background is stripped automatically from the eyeshadow texture.

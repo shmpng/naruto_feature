@@ -50,13 +50,13 @@ class SageEyeFilterApp:
 
         # ── Iris sticker ──────────────────────────────────────────
         iris_path = next(
-            (f for f in ["eye_overlay.png", "eye_overlay.jpg"] if os.path.exists(f)),
-            "eye_overlay.png",
+            (f for f in ["iris.png", "iris.jpg"] if os.path.exists(f)),
+            "iris.jpg",
         )
         self.iris_ov = load_iris_overlay(iris_path)
 
         # ── Orange eyeshadow ──────────────────────────────────────
-        orange_path = "realorange.jpg"
+        orange_path = "eyeshadow.jpg"
         if os.path.exists(orange_path):
             orange = cv2.imread(orange_path)
             self.orange      = orange
